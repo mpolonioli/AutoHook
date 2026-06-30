@@ -321,7 +321,7 @@ namespace AutoHook.Resources.Localization {
                 return ResourceManager.GetString("AnimationCanceling", resourceCulture);
             }
         }
-
+        
         /// <summary>
         ///   Looks up a localized string similar to Temporary presets ({0}).
         /// </summary>
@@ -330,7 +330,7 @@ namespace AutoHook.Resources.Localization {
                 return ResourceManager.GetString("AnonymousPresets_Header", resourceCulture);
             }
         }
-
+        
         /// <summary>
         ///   Looks up a localized string similar to Anti-Afk while fishing.
         /// </summary>
@@ -1690,6 +1690,15 @@ namespace AutoHook.Resources.Localization {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Disabled plugin: extra rules created a preset swap loop ({0})..
+        /// </summary>
+        internal static string Extra_PresetSwapLoop_Bailout {
+            get {
+                return ResourceManager.GetString("Extra_PresetSwapLoop_Bailout", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to &gt;Make sure &apos;Use Mooch II&apos; is enabled or else it wont work&lt;
         ///This could save you 100gp if going only for mooches.
         /// </summary>
@@ -3025,6 +3034,15 @@ namespace AutoHook.Resources.Localization {
         }
         
         /// <summary>
+        ///   Looks up a localized string similar to Opens Replay Window.
+        /// </summary>
+        internal static string Opens_Replay_Window {
+            get {
+                return ResourceManager.GetString("Opens_Replay_Window", resourceCulture);
+            }
+        }
+        
+        /// <summary>
         ///   Looks up a localized string similar to Overrides Identical Cast.
         /// </summary>
         internal static string OverridesIdenticalCast {
@@ -3156,6 +3174,42 @@ namespace AutoHook.Resources.Localization {
         internal static string PresetAlreadyExist {
             get {
                 return ResourceManager.GetString("PresetAlreadyExist", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Defined in Conditions tab.
+        /// </summary>
+        internal static string PresetConditions_DefinedInTab {
+            get {
+                return ResourceManager.GetString("PresetConditions_DefinedInTab", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Reusable named conditions for this preset. Reference them within any condition set.
+        /// </summary>
+        internal static string PresetConditions_HelpText {
+            get {
+                return ResourceManager.GetString("PresetConditions_HelpText", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to (condition missing).
+        /// </summary>
+        internal static string PresetConditions_Missing {
+            get {
+                return ResourceManager.GetString("PresetConditions_Missing", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to New condition.
+        /// </summary>
+        internal static string PresetConditions_NewName {
+            get {
+                return ResourceManager.GetString("PresetConditions_NewName", resourceCulture);
             }
         }
         
@@ -3376,20 +3430,20 @@ namespace AutoHook.Resources.Localization {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Reset Fish Caught Counter.
-        /// </summary>
-        internal static string Reset_fish_caught_counter {
-            get {
-                return ResourceManager.GetString("Reset_fish_caught_counter", resourceCulture);
-            }
-        }
-        
-        /// <summary>
         ///   Looks up a localized string similar to Reset counter after swapping baits.
         /// </summary>
         internal static string Reset_Counter_Bait_Swap {
             get {
                 return ResourceManager.GetString("Reset_Counter_Bait_Swap", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Reset Fish Caught Counter.
+        /// </summary>
+        internal static string Reset_fish_caught_counter {
+            get {
+                return ResourceManager.GetString("Reset_fish_caught_counter", resourceCulture);
             }
         }
         
@@ -3642,6 +3696,24 @@ namespace AutoHook.Resources.Localization {
         internal static string SpectralCurrentSettings {
             get {
                 return ResourceManager.GetString("SpectralCurrentSettings", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Spectral Rest.
+        /// </summary>
+        internal static string SpectralRestOnGain {
+            get {
+                return ResourceManager.GetString("SpectralRestOnGain", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Rest and re-cast when a spectral current starts mid-cast.
+        /// </summary>
+        internal static string SpectralRestOnGainHelpText {
+            get {
+                return ResourceManager.GetString("SpectralRestOnGainHelpText", resourceCulture);
             }
         }
         
@@ -4371,6 +4443,15 @@ namespace AutoHook.Resources.Localization {
         internal static string UIUseCurrentBait {
             get {
                 return ResourceManager.GetString("UIUseCurrentBait", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized string similar to Unknown Presets.
+        /// </summary>
+        internal static string UnknownPresets {
+            get {
+                return ResourceManager.GetString("UnknownPresets", resourceCulture);
             }
         }
         

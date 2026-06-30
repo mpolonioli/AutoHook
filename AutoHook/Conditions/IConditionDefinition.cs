@@ -9,9 +9,17 @@ public interface IConditionDefinition {
     string Name { get; }
     ConditionScopeFlags AllowedScopes { get; }
 
+    /// <summary>
+    /// When true, <see cref="Evaluate"/> uses <see cref="FishingInfo.CastSnapshot"/> while the line is in the water.
+    /// </summary>
+    bool SnapshottableOnCast => false;
+
     bool Evaluate(WorldState world, IReadOnlyDictionary<string, object> parameters);
 
     void DrawParams(Condition condition);
+
+    string DescribeParameters(IReadOnlyDictionary<string, object> parameters)
+        => ConditionParameterFormat.FormatGenericParams(parameters);
 
     public static List<uint> GetIds(IReadOnlyDictionary<string, object> p) {
         if (!p.TryGetValue("ids", out var o)) return [];
@@ -23,7 +31,7 @@ public interface IConditionDefinition {
 
     public static List<uint> GetStatusIds(IReadOnlyDictionary<string, object> p) => GetIds(p);
 
-    public static List<byte> GetWeatherIds(IReadOnlyDictionary<string, object> p) {
+    public static List<uint> GetWeatherIds(IReadOnlyDictionary<string, object> p) {
         if (!p.TryGetValue("ids", out var o)) return [];
         if (o is List<object> list)
             return [.. list.Select(x => Convert.ToByte(x))];

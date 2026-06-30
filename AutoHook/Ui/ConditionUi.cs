@@ -16,6 +16,7 @@ public enum ConditionScope {
     AutoCordial,
     FishIgnore,
     AutoCast,
+    PresetDefinition,
 }
 
 public static class ConditionUi {
@@ -23,6 +24,9 @@ public static class ConditionUi {
     private static string _exportBase64 = string.Empty;
     private static int _forceOpenConditionUiId;
     private static readonly Dictionary<ConditionScope, List<ConditionTypeDef>> ScopedTypesCache = [];
+
+    public static CustomPresetConfig? EvaluationPreset { get; set; }
+    public static Guid? ExcludeNamedConditionId { get; set; }
 
     public static bool IsConditionCurrentlyTrue(Condition cond)
         => cond.Enabled && cond.Evaluate(Service.WorldState, Registry);
@@ -32,52 +36,9 @@ public static class ConditionUi {
            && group.Conditions.Any(c => c.Enabled)
            && group.Evaluate(Service.WorldState, Registry);
 
-    public static ConditionSet? DrawConditionSet(string label, ConditionSet? set, ConditionScope scope, bool showPresets = true) {
-        using var tree = ImRaii.TreeNode(label, ImGuiTreeNodeFlags.FramePadding | ImGuiTreeNodeFlags.SpanAvailWidth);
-        if (!tree)
-            return set;
-
-        set ??= new ConditionSet();
-
-        using var id = ImRaii.PushId(label);
-        {
-            DrawSetHeader(set);
-            ImGui.Spacing();
-
-            for (var gi = 0; gi < set.Groups.Count; gi++) {
-                var group = set.Groups[gi];
-                var groupLetter = (char)('A' + gi);
-                using var _ = ImRaii.PushId($"grp{gi}");
-
-                var deleteGroup = false;
-                using (IsGroupCurrentlyTrue(group) ? ImRaii.PushColor(ImGuiCol.Text, ImGuiColors.ParsedGreen) : null)
-                    if (ImGui.CollapsingHeader($"Group {groupLetter}###grp_header", ImGuiTreeNodeFlags.DefaultOpen)) {
-                        deleteGroup = DrawGroupHeader(set, group, gi, scope);
-                        ImGui.Spacing();
-
-                        // Presets apply to this specific group
-                        if (showPresets) {
-                            ConditionPresetsUi.DrawScopePresets(scope, set, group);
-                            ImGui.Spacing();
-                        }
-
-                        DrawConditions(group, scope);
-                    }
-
-                if (deleteGroup) {
-                    set.Groups.RemoveAt(gi);
-                    gi--;
-                    continue;
-                }
-            }
-        }
-
-        return set;
-    }
-
     private static bool RequiresComplexConditionUi(ConditionSet set) => set.Groups.Count > 1;
 
-    public static ConditionSet? DrawConditionSetSlim(string label, ConditionSet? set, ConditionScope scope, bool showAdvanced = true, IReadOnlyList<string>? allowedTypeIds = null, bool showSubPrefix = false, Action? drawHeaderExtras = null) {
+    public static ConditionSet? DrawConditionSet(string label, ConditionSet? set, ConditionScope scope, bool showAdvanced = true, IReadOnlyList<string>? allowedTypeIds = null, bool showSubPrefix = false, Action? drawHeaderExtras = null) {
         set ??= new ConditionSet();
         if (set.Groups.Count == 0)
             set.Groups.Add(new ConditionGroup());
@@ -90,17 +51,19 @@ public static class ConditionUi {
         }
 
         var group = set.Groups[0];
-        var types = allowedTypeIds != null && allowedTypeIds.Count > 0 ? [.. GetScopedTypes(scope).Where(d => allowedTypeIds.Contains(d.Id))] : GetScopedTypes(scope);
-        var defaultTypeId = types.FirstOrDefault()?.Id ?? Registry.GetId<StatusActiveCD>();
+        var types = GetTypesForScope(scope, allowedTypeIds);
+        var defaultTypeId = types.FirstOrDefault(d => !PresetConditionHelper.IsPresetType(d.Id))?.Id
+                            ?? types.FirstOrDefault()?.Id
+                            ?? Registry.GetId<StatusActiveCD>();
 
         // Header: (optional) sub marker + label + add + small advanced icon + optional extras.
         if (!label.IsNullOrEmpty()) {
             if (showSubPrefix) {
-                ImGui.TextUnformatted(" └");
+                ImGui.Text(" └");
                 ImGui.SameLine();
             }
 
-            ImGui.TextUnformatted(label);
+            ImGui.Text(label);
             ImGui.SameLine();
         }
 
@@ -129,7 +92,7 @@ public static class ConditionUi {
             var cond = group.Conditions[ci];
             cond.EnsureUiId();
             using var _ = ImRaii.PushId($"slim_cond{cond.UiId}");
-            var rowLabel = types.FirstOrDefault(d => d.Id == cond.TypeId)?.Name ?? cond.TypeId;
+            var rowLabel = ResolveTypeLabel(cond.TypeId, types);
             var enabled = cond.Enabled;
 
             var forceOpen = ci == newlyAddedIndex || cond.UiId == _forceOpenConditionUiId;
@@ -186,7 +149,7 @@ public static class ConditionUi {
                 if (deleteGroup)
                     toRemoveGroup.Add(gi);
                 ImGui.Spacing();
-                DrawConditionsWithTypes(g, scope, GetScopedTypes(scope));
+                DrawConditionsWithTypes(g, scope, GetTypesForScope(scope));
             }, highlightLabel: IsGroupCurrentlyTrue(g));
             if (gEnabled != g.Enabled)
                 g.Enabled = gEnabled;
@@ -295,7 +258,9 @@ public static class ConditionUi {
         ImGui.SameLine();
         if (ImGuiComponents.IconButton(FontAwesomeIcon.PlusCircle)) {
             group.Conditions.Add(new Condition {
-                TypeId = GetScopedTypes(scope).FirstOrDefault()?.Id ?? Registry.GetId<StatusActiveCD>(),
+                TypeId = GetTypesForScope(scope).FirstOrDefault(d => !PresetConditionHelper.IsPresetType(d.Id))?.Id
+                         ?? GetTypesForScope(scope).FirstOrDefault()?.Id
+                         ?? Registry.GetId<StatusActiveCD>(),
                 Params = []
             });
         }
@@ -313,19 +278,29 @@ public static class ConditionUi {
         return false;
     }
 
-    private static void DrawConditions(ConditionGroup group, ConditionScope scope)
-        => DrawConditionsWithTypes(group, scope, GetScopedTypes(scope));
-
     private static bool DrawConditionContent(Condition cond, ConditionScope scope, IReadOnlyList<ConditionTypeDef> defs) {
         var typeChanged = false;
         DrawInverseToggle(cond);
         ImGui.SameLine();
         ImGui.SetNextItemWidth(180.Scaled());
-        var currentDef = defs.FirstOrDefault(d => d.Id == cond.TypeId) ?? defs.FirstOrDefault();
-        var currentLabel = currentDef?.Name ?? cond.TypeId;
+        var currentLabel = ResolveTypeLabel(cond.TypeId, defs);
+        var custom = defs.Where(d => PresetConditionHelper.IsPresetType(d.Id)).ToList();
+        var builtIn = defs.Where(d => !PresetConditionHelper.IsPresetType(d.Id)).ToList();
         using (var combo = ImRaii.Combo("##type", currentLabel)) {
             if (combo) {
-                foreach (var def in defs) {
+                foreach (var def in custom) {
+                    var sel = def.Id == cond.TypeId;
+                    if (ImGui.Selectable($"{def.Name}##{def.Id}", sel)) {
+                        cond.TypeId = def.Id;
+                        cond.Params.Clear();
+                        typeChanged = true;
+                    }
+                }
+
+                if (custom.Count > 0)
+                    ImGui.Separator();
+
+                foreach (var def in builtIn) {
                     var sel = def.Id == cond.TypeId;
                     if (ImGui.Selectable($"{def.Name}##{def.Id}", sel)) {
                         cond.TypeId = def.Id;
@@ -336,7 +311,10 @@ public static class ConditionUi {
             }
         }
         ImGui.SameLine();
-        ConditionParamUi.DrawParams(cond);
+        if (PresetConditionHelper.IsPresetType(cond.TypeId))
+            custom.FirstOrDefault(d => d.Id == cond.TypeId)?.DrawParams?.Invoke(cond);
+        else
+            ConditionParamUi.DrawParams(cond);
         return typeChanged;
     }
 
@@ -357,6 +335,27 @@ public static class ConditionUi {
         }
     }
 
+    private static IReadOnlyList<ConditionTypeDef> GetTypesForScope(ConditionScope scope, IReadOnlyList<string>? allowedTypeIds = null) {
+        var builtIn = GetScopedTypes(scope);
+        if (allowedTypeIds is { Count: > 0 })
+            builtIn = [.. builtIn.Where(d => allowedTypeIds.Contains(d.Id))];
+
+        var preset = EvaluationPreset;
+        if (preset == null || preset.NamedConditions.Count == 0)
+            return builtIn;
+
+        var custom = PresetConditionHelper.GetPresetTypeDefs(preset, ExcludeNamedConditionId);
+        return [.. custom, .. builtIn];
+    }
+
+    private static string ResolveTypeLabel(string typeId, IReadOnlyList<ConditionTypeDef> defs) {
+        var fromDefs = defs.FirstOrDefault(d => d.Id == typeId)?.Name;
+        if (fromDefs != null)
+            return fromDefs;
+
+        return PresetConditionHelper.ResolveDisplayName(typeId, EvaluationPreset) ?? typeId;
+    }
+
     private static IReadOnlyList<ConditionTypeDef> GetScopedTypes(ConditionScope scope) {
         if (ScopedTypesCache.TryGetValue(scope, out var cached))
             return cached;
@@ -367,9 +366,12 @@ public static class ConditionUi {
             ConditionScope.AutoCordial => ConditionScopeFlags.AutoCordial,
             ConditionScope.FishIgnore => ConditionScopeFlags.FishIgnore,
             ConditionScope.AutoCast => ConditionScopeFlags.AutoCast,
+            ConditionScope.PresetDefinition => ConditionScopeFlags.All,
             _ => ConditionScopeFlags.All,
         };
-        cached = [.. all.Where(d => (d.AllowedScopes & flag) != 0)];
+        cached = scope == ConditionScope.PresetDefinition
+            ? [.. all]
+            : [.. all.Where(d => (d.AllowedScopes & flag) != 0)];
         ScopedTypesCache[scope] = cached;
         return cached;
     }

@@ -7,6 +7,32 @@ using System.Text.Json.Serialization;
 namespace AutoHook.Configurations;
 
 public class CustomPresetConfig : BasePresetConfig {
+    public const string AnonymousPresetPrefix = "anon_";
+
+    [JsonIgnore]
+    public bool IsAnonymous => PresetName.StartsWith(AnonymousPresetPrefix, StringComparison.Ordinal);
+    public string GetAnonymousName() => AnonymousPresetPrefix + PresetName;
+
+    public static Dictionary<string, string> BuildAnonymousNameMap(IEnumerable<CustomPresetConfig> presets)
+        => presets.ToDictionary(p => p.PresetName, p => p.GetAnonymousName());
+
+    public static void RemapPresetSwapReferences(IEnumerable<CustomPresetConfig> presets, IReadOnlyDictionary<string, string> nameMap) {
+        foreach (var preset in presets)
+            RemapPresetSwapReferences(preset, nameMap);
+    }
+
+    public static void RemapPresetSwapReferences(CustomPresetConfig preset, IReadOnlyDictionary<string, string> nameMap) {
+        foreach (var fish in preset.ListOfFish) {
+            if (fish.PresetToSwap != "-" && nameMap.TryGetValue(fish.PresetToSwap, out var newName))
+                fish.PresetToSwap = newName;
+        }
+
+        foreach (var trig in preset.ExtraCfg.Triggers) {
+            if (trig.PresetToSwap != "-" && nameMap.TryGetValue(trig.PresetToSwap, out var newName))
+                trig.PresetToSwap = newName;
+        }
+    }
+
     public List<HookConfig> ListOfBaits { get; set; } = [];
     public List<HookConfig> ListOfMooch { get; set; } = [];
     public List<FishConfig> ListOfFish { get; set; } = [];
@@ -14,6 +40,8 @@ public class CustomPresetConfig : BasePresetConfig {
     public AutoCastsConfig AutoCastsCfg = new();
 
     public ExtraConfig ExtraCfg = new();
+
+    public List<NamedConditionConfig> NamedConditions { get; set; } = [];
 
     public CustomPresetConfig(string name) {
         PresetName = name;
@@ -116,31 +144,44 @@ public class CustomPresetConfig : BasePresetConfig {
                             ImGui.CalcTextSize(PresetName).X / 2);
         ImGui.TextColored(ImGuiColors.DalamudOrange, $" {PresetName}");
 
-        using var mainTab = ImRaii.TabBar(@"TabBarsPreset", ImGuiTabBarFlags.NoTooltip);
-        if (!mainTab)
-            return;
+        ConditionUi.EvaluationPreset = this;
+        try {
+            using var mainTab = ImRaii.TabBar(@"TabBarsPreset", ImGuiTabBarFlags.NoTooltip);
+            if (!mainTab)
+                return;
 
-        using (var tabHook = ImRaii.TabItem(UIStrings.Hooking)) {
-            DrawUtil.HoveredTooltip(UIStrings.BaitTabHelpText);
-            if (tabHook)
-                SubTabBaitMooch.DrawHookTab(this);
+            using (var tabHook = ImRaii.TabItem(UIStrings.Hooking)) {
+                DrawUtil.HoveredTooltip(UIStrings.BaitTabHelpText);
+                if (tabHook)
+                    SubTabBaitMooch.DrawHookTab(this);
+            }
+
+            using (var tabFish = ImRaii.TabItem(UIStrings.FishCaught)) {
+                DrawUtil.HoveredTooltip(UIStrings.FishCaughtHelp);
+                if (tabFish)
+                    SubTabFish.DrawFishTab(this);
+            }
+
+            using (var tabExtra = ImRaii.TabItem(UIStrings.ExtraOptions)) {
+                DrawUtil.HoveredTooltip(UIStrings.ExtraOptionsHelp);
+                if (tabExtra)
+                    SubTabExtra.DrawExtraTab(this);
+            }
+
+            using (var tabAutoCast = ImRaii.TabItem(UIStrings.Auto_Casts)) {
+                DrawUtil.HoveredTooltip(UIStrings.AutoCastsHelp);
+                if (tabAutoCast)
+                    SubTabAutoCast.DrawAutoCastTab(this);
+            }
+
+            using (var tabConditions = ImRaii.TabItem(UIStrings.Conditions)) {
+                DrawUtil.HoveredTooltip(UIStrings.PresetConditions_HelpText);
+                if (tabConditions)
+                    SubTabConditions.DrawConditionsTab(this);
+            }
         }
-
-        using (var tabFish = ImRaii.TabItem(UIStrings.FishCaught)) {
-            DrawUtil.HoveredTooltip(UIStrings.FishCaughtHelp);
-            if (tabFish)
-                SubTabFish.DrawFishTab(this);
+        finally {
+            ConditionUi.EvaluationPreset = null;
         }
-
-        using (var tabExtra = ImRaii.TabItem(UIStrings.ExtraOptions)) {
-            DrawUtil.HoveredTooltip(UIStrings.ExtraOptionsHelp);
-            if (tabExtra)
-                SubTabExtra.DrawExtraTab(this);
-        }
-
-        using var tabAutoCast = ImRaii.TabItem(UIStrings.Auto_Casts);
-        DrawUtil.HoveredTooltip(UIStrings.AutoCastsHelp);
-        if (tabAutoCast)
-            SubTabAutoCast.DrawAutoCastTab(this);
     }
 }

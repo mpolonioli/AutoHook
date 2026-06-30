@@ -3,6 +3,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Components;
 using Dalamud.Interface.Utility.Raii;
+using StatusSheet = Lumina.Excel.Sheets.Status;
 
 // ReSharper disable FieldCanBeMadeReadOnly.Global
 // ReSharper disable MemberCanBePrivate.Global
@@ -58,17 +59,14 @@ public class BaseHookset(uint requiredStatus) {
             return 0;
 
         var set = chumActive ? ChumTimeoutConditionSet : TimeoutConditionSet;
-        if (set.Fails())
-            return 0;
-
-        return timeout;
+        return set.Fails() ? 0 : timeout;
     }
 
     public void DrawOptions() {
         using var id = ImRaii.PushId(@"BaseHookset");
         if (RequiredStatus != 0) {
             ImGui.Spacing();
-            var statusName = MultiString.GetStatusName(RequiredStatus);
+            var statusName = StatusSheet.GetRow(RequiredStatus).Name.ToString();
             DrawUtil.Checkbox(string.Format(UIStrings.UseConfigRequiredStatus, statusName), ref UseCustomStatusHook,
                 UIStrings.RequiredStatusSettingHelpText);
         }
@@ -130,12 +128,12 @@ public class BaseHookset(uint requiredStatus) {
             ImGui.TextColored(ImGuiColors.DalamudYellow, UIStrings.TimeoutOption);
             DrawTimeoutField(UIStrings.TimeLimit, ref TimeoutMax, UIStrings.DoesntHaveAffectUnderChum);
             if (TimeoutMax > 0) {
-                TimeoutConditionSet = Ui.ConditionUi.DrawConditionSetSlim(UIStrings.Conditions, TimeoutConditionSet, Ui.ConditionScope.Hook, showAdvanced: true, showSubPrefix: true);
+                TimeoutConditionSet = Ui.ConditionUi.DrawConditionSet(UIStrings.Conditions, TimeoutConditionSet, Ui.ConditionScope.Hook, showAdvanced: true, showSubPrefix: true);
             }
 
             DrawTimeoutField(UIStrings.ChumTimeLimit, ref ChumTimeoutMax);
             if (ChumTimeoutMax > 0) {
-                ChumTimeoutConditionSet = Ui.ConditionUi.DrawConditionSetSlim(UIStrings.Conditions, ChumTimeoutConditionSet, Ui.ConditionScope.Hook, showAdvanced: true, showSubPrefix: true);
+                ChumTimeoutConditionSet = Ui.ConditionUi.DrawConditionSet(UIStrings.Conditions, ChumTimeoutConditionSet, Ui.ConditionScope.Hook, showAdvanced: true, showSubPrefix: true);
             }
             ImGui.TreePop();
         }

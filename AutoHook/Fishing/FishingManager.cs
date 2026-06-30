@@ -1,11 +1,14 @@
 using AutoHook.Conditions;
+using AutoHook.Replay;
 using AutoHook.Tasks;
 using Dalamud.Plugin.Services;
 using ECommons.Throttlers;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Event;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
+using Lumina.Excel.Sheets;
 using System.Diagnostics;
+using StatusSheet = Lumina.Excel.Sheets.Status;
 
 namespace AutoHook.Fishing;
 
@@ -14,9 +17,8 @@ public partial class FishingManager : IDisposable {
     private static readonly FishingPresets Presets = Service.Configuration.HookPresets;
     private readonly Stopwatch _fishingTimer = new();
     private readonly Random _rng = new();
-    private readonly EventSubscriptions _oceanEventSubs;
+    private readonly EventSubscriptions _eventSubs;
     private StopAfterState _stopAfterNextFish;
-
     private double FishTimerSecs => Math.Truncate(_fishingTimer.ElapsedMilliseconds / 1000.0 * 100) / 100;
 
     private enum StopAfterState {
@@ -48,10 +50,13 @@ public partial class FishingManager : IDisposable {
     }
 
     public FishingManager() {
-        _oceanEventSubs = new(Ws.OceanZoneStarted.Subscribe(OnOceanZoneStarted));
+        _eventSubs = new(
+            Ws.OceanZoneStarted.Subscribe(OnOceanZoneStarted),
+            Ws.SpectralCurrentChanged.Subscribe(OnSpectralCurrentChanged));
         try {
             Svc.Framework.Update += OnFrameworkUpdate;
-            Svc.Chat.ChatMessage += OnMessageDelegate;
+            Svc.Chat.LogMessage += OnLogMessage;
+            Svc.Chat.ChatMessage += CheckForSpecialLure;
             Ws.Modified += OnWorldStateModified;
         }
         catch (Exception e) {
@@ -60,9 +65,10 @@ public partial class FishingManager : IDisposable {
     }
 
     public void Dispose() {
-        _oceanEventSubs.Dispose();
+        _eventSubs.Dispose();
         Svc.Framework.Update -= OnFrameworkUpdate;
-        Svc.Chat.ChatMessage -= OnMessageDelegate;
+        Svc.Chat.ChatMessage -= CheckForSpecialLure;
+        Svc.Chat.LogMessage -= OnLogMessage;
         Ws.Modified -= OnWorldStateModified;
     }
 
@@ -87,6 +93,25 @@ public partial class FishingManager : IDisposable {
 
         Svc.Automation.Start(new AutoOceanFish(this, op.ZoneIndex));
         Service.PrintDebug($"[AutoOceanFish] Task started for zone {op.ZoneIndex + 1}");
+    }
+
+    private void OnSpectralCurrentChanged(WorldState.OpSpectralCurrentChanged op) {
+        if (op.Change is not SpectralCurrentChange.Gained) return;
+        if (!Service.Configuration.PluginEnabled || !Service.Configuration.SpectralRest) return;
+        if (Ws.Fishing.FishingState is not (FishingState.LineInWater or FishingState.AmbitiousLure)) return;
+        if (Ws.Fishing.FishingStep.HasFlag(FishingSteps.Reeling | FishingSteps.TimeOut)) return;
+        if (Ws.Player.BlockCasting || Service.TaskManager.IsBusy) return;
+        if (!EzThrottler.Throttle("SpectralRestMidCast", 1000)) return;
+
+        Service.Status = UIStrings.SpectralRestOnGain;
+        Service.PrintDebug("Spectral gained mid-cast; resting");
+
+        var delay = _rng.Next(Service.Configuration.DelayBeforeCancelMin, Service.Configuration.DelayBeforeCancelMax);
+        Service.TaskManager.EnqueueDelay(delay);
+        Service.TaskManager.Enqueue(() => {
+            PlayerRes.CastActionDelayed(IDs.Actions.Rest, ActionType.Action, UIStrings.Hook);
+            Ws.Execute(new FishingInfo.OpSetFishingStep(FishingSteps.Reeling));
+        });
     }
 
     private void OnWorldStateModified(WorldState.Operation op) {
@@ -136,7 +161,7 @@ public partial class FishingManager : IDisposable {
             var result = ChangeBait((uint)extraCfg.ForcedBaitId);
 
             if (result == ChangeBaitReturn.Success) {
-                Service.PrintChat(@$"[AutoHook] Starting with bait: {MultiString.GetItemName(extraCfg.ForcedBaitId)}");
+                Service.PrintChat(@$"[AutoHook] Starting with bait: {Item.GetRow((uint)extraCfg.ForcedBaitId).Name}");
                 Service.Save();
             }
             else if (result != ChangeBaitReturn.AlreadyEquipped)
@@ -159,7 +184,7 @@ public partial class FishingManager : IDisposable {
             var buffStatus = "";
 
             if (hookset.RequiredStatus != 0) {
-                buffStatus = MultiString.GetStatusName(hookset.RequiredStatus);
+                buffStatus = StatusSheet.GetRow(hookset.RequiredStatus).Name.ToString();
                 buffStatus = @$"({buffStatus})";
             }
 
@@ -211,12 +236,8 @@ public partial class FishingManager : IDisposable {
         return isMooching && Ws.Fishing.LastCatch?.FishId is { } fishId and > 0 ? fishId : bait.MoochId;
     }
 
-    private static double GetTimeoutMax(HookConfig selected) {
-        if (!selected.Enabled)
-            return 0;
-
-        return selected.GetHookset().GetEffectiveTimeoutMax(Ws.HasStatus(IDs.Status.Chum));
-    }
+    private static double GetTimeoutMax(HookConfig selected)
+        => !selected.Enabled ? 0 : selected.GetHookset().GetEffectiveTimeoutMax(Ws.HasStatus(IDs.Status.Chum));
 
     private void OnFrameworkUpdate(IFramework _) {
         if (!Service.Configuration.PluginEnabled || !Svc.ClientState.IsLoggedIn || Svc.Objects.LocalPlayer == null)
@@ -322,7 +343,7 @@ public partial class FishingManager : IDisposable {
 
         CheckExtraActions();
 
-        var lastCatchCfg = GetLastCatchConfig();
+        var lastCatchCfg = GetEffectiveCatchConfig();
 
         var casted = false;
         if (Ws.FishingStep.HasFlag(FishingSteps.FishCaught) && !Ws.FishingStep.HasFlag(FishingSteps.Quitting)) {
@@ -346,7 +367,7 @@ public partial class FishingManager : IDisposable {
         Ws.Execute(new FishingInfo.OpSetLureSuccess(false));
         Ws.Execute(new FishingInfo.OpSetLastLureCastBiteTime(null));
 
-        var baitname = MultiString.GetItemName(Ws.Fishing.BaitInfo.MoochId);
+        var baitname = Item.GetRow(Ws.Fishing.BaitInfo.MoochId).Name.ToString();
         if (!mooching)
             Service.PrintDebug(@$"Started fishing with normal bait: {baitname}");
         else
@@ -384,6 +405,7 @@ public partial class FishingManager : IDisposable {
     private void OnBite() {
         UpdateStatusAndTimer();
         var currentHook = GetHookCfg();
+        ReplayDecisions.HookPresetOnBite(currentHook.Enabled);
         _fishingTimer.Stop();
 
         if (Ws.Player.HasStatus(IDs.Status.Salvage) && GetAutoCastCfg().ChumAnimationCancel)
@@ -407,6 +429,7 @@ public partial class FishingManager : IDisposable {
 
         if (hook is null or HookType.None) {
             delay = _rng.Next(Service.Configuration.DelayBeforeCancelMin, Service.Configuration.DelayBeforeCancelMax);
+            ReplayDecisions.HookPresetChoice(bite, null);
 
             Service.TaskManager.EnqueueDelay(delay);
             Service.TaskManager.Enqueue(() => PlayerRes.CastAction(IDs.Actions.Rest));
@@ -415,6 +438,7 @@ public partial class FishingManager : IDisposable {
             return;
         }
 
+        ReplayDecisions.HookPresetChoice(bite, hook);
         Service.TaskManager.EnqueueDelay(delay);
         Service.TaskManager.Enqueue(() => {
             if (hook == HookType.Stellar)
@@ -440,9 +464,8 @@ public partial class FishingManager : IDisposable {
         Service.PrintDebug(@$"[HookManager] Caught {lastCatchFish.Name} (id {lastCatchFish.Id})");
 
         if (lastFishCatchCfg != null) {
-            for (var i = 0; i < amount; i++) {
+            for (var i = 0; i < amount; i++)
                 FishingHelper.AddFishCount(lastFishCatchCfg.UniqueId);
-            }
 
             Service.NotificationMaster.TryNotify(lastFishCatchCfg.NotifyOnSuccess, $"Caught {lastCatchFish.Name} x{amount}");
         }
@@ -454,7 +477,7 @@ public partial class FishingManager : IDisposable {
     }
 
     private void CheckStopCondition() {
-        if (GetLastCatchConfig() is { } lastFishCatchCfg)
+        if (GetEffectiveCatchConfig() is { } lastFishCatchCfg)
             TryApplyStopLimit(lastFishCatchCfg.StopAfterCaughtLimit, lastFishCatchCfg.StopFishingStep,
                 lastFishCatchCfg.StopAfterResetCount, lastFishCatchCfg.UniqueId,
                 UIStrings.Caught_Limited_Reached_Chat_Message, lastFishCatchCfg.Fish.Name);

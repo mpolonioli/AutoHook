@@ -31,27 +31,21 @@ public static class PlayerRes {
     public static uint CastActionCost(uint id, ActionType actionType = ActionType.Action)
         => (uint)ActionManager.GetActionCost(actionType, id, 0, 0, 0, 0);
 
-    public static unsafe bool ActionOnCoolDown(uint id, ActionType actionType = ActionType.Action) {
-        var group = GetRecastGroups(id, actionType);
-        if (group == -1) return false;
-        var recastDetail = ActionManager.Instance()->GetRecastGroupDetail(group);
-        return recastDetail->Total - recastDetail->Elapsed > 0;
+    public static bool ActionOnCoolDown(uint id, ActionType actionType = ActionType.Action)
+        => WS.ActionOnCooldown(id, actionType);
+
+    public static float GetCooldown(uint id, ActionType actionType) {
+        var remaining = WS.GetCooldownRemaining(id, actionType);
+        return remaining <= 0f ? 0f : remaining;
     }
 
-    public static unsafe float GetCooldown(uint id, ActionType actionType) {
-        var group = GetRecastGroups(id, actionType);
-        if (group == -1) return 0;
-        var recast = ActionManager.Instance()->GetRecastGroupDetail(group);
-        return recast->Total - recast->Elapsed;
-    }
-
-    public static void CastActionDelayed(uint actionId, ActionType actionType = ActionType.Action, string actionName = "") {
+    public static bool CastActionDelayed(uint actionId, ActionType actionType = ActionType.Action, string actionName = "") {
         if (WS.BlockCasting)
-            return;
+            return false;
 
         if (actionType is ActionType.Action or ActionType.EventAction) {
             if (!WS.ActionAvailable(actionId, actionType))
-                return;
+                return false;
 
             WS.Execute(new WorldState.OpSetBlockCasting(true));
             Service.PrintDebug(@$"[PlayerResources] Casting Action: {actionName}, Id: {actionId}");
@@ -59,17 +53,21 @@ public static class PlayerRes {
             catch (Exception e) { Service.PrintDebug(@$"Error casting action: {actionName}, Id: {actionId}, {e}"); }
 
             DelayNextCast(actionId);
-            return;
+            return true;
         }
 
         if (actionType != ActionType.Item)
-            return;
+            return false;
+
+        if (!WS.ActionAvailable(actionId, actionType))
+            return false;
 
         WS.Execute(new WorldState.OpSetBlockCasting(true));
         Service.PrintDebug(@$"[PlayerResources] Using Item: {actionName}, Id: {actionId}");
         try { UseItems(actionId); }
         catch (Exception e) { Service.PrintDebug(@$"Error casting action: {actionName}, Id: {actionId}, {e}"); }
         DelayNextCast(actionId);
+        return true;
     }
 
     /// <summary>Returns whether a delayed cast was started (block set and post-cast delay scheduled).</summary>
@@ -80,24 +78,8 @@ public static class PlayerRes {
         return TryCastActionDelayed(actionId, ActionType.Action, actionName);
     }
 
-    public static bool TryCastActionDelayed(uint actionId, ActionType actionType = ActionType.Action, string actionName = "") {
-        if (WS.BlockCasting)
-            return false;
-
-        if (actionType is ActionType.Action or ActionType.EventAction) {
-            if (!WS.ActionAvailable(actionId, actionType))
-                return false;
-
-            CastActionDelayed(actionId, actionType, actionName);
-            return true;
-        }
-
-        if (actionType != ActionType.Item)
-            return false;
-
-        CastActionDelayed(actionId, actionType, actionName);
-        return true;
-    }
+    public static bool TryCastActionDelayed(uint actionId, ActionType actionType = ActionType.Action, string actionName = "")
+        => CastActionDelayed(actionId, actionType, actionName);
 
     private static bool _blockActionNoDelay;
 
@@ -112,7 +94,7 @@ public static class PlayerRes {
             casted = CastAction(actionId, actionType);
             if (casted) Service.PrintDebug(@$"[PlayerResources] Casting Action: {actionName}, Id: {actionId}");
         }
-        else if (actionType == ActionType.Item) {
+        else if (actionType == ActionType.Item && WS.ActionAvailable(actionId, actionType)) {
             Service.PrintDebug(@$"[PlayerResources] Using Item: {actionName}, Id: {actionId}");
             UseItems(actionId);
             casted = true;

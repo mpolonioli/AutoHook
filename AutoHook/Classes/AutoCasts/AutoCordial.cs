@@ -55,14 +55,17 @@ public sealed class AutoCordial : BaseActionCast {
             cordialList = _invertedList;
 
         foreach (var (id, recovery) in cordialList) {
+            if (!CheckNotOvercaped(recovery))
+                continue;
+
+            // TODO log this in replay and remove
             if (!Service.WorldState.HaveCordialInInventory(id)) {
-                Svc.Log.Debug($"No cordial in inventory");
+                //Svc.Log.Debug($"No cordial (#{id}) in inventory");
                 continue;
             }
 
             Id = id;
-
-            return CheckNotOvercaped(recovery);
+            return true;
         }
 
         return false;
@@ -93,7 +96,7 @@ public sealed class AutoCordial : BaseActionCast {
 
         if (!IsSpearFishing) {
             using (ImRaii.PushId("OvercapConditions"))
-                OvercapConditionSet = Ui.ConditionUi.DrawConditionSetSlim("Overcap conditions", OvercapConditionSet, Ui.ConditionScope.AutoCordial, showAdvanced: true, showSubPrefix: true);
+                OvercapConditionSet = Ui.ConditionUi.DrawConditionSet("Overcap conditions", OvercapConditionSet, Ui.ConditionScope.AutoCordial, showAdvanced: true, showSubPrefix: true);
         }
     };
 

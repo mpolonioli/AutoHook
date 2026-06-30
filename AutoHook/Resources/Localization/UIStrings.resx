@@ -1693,6 +1693,12 @@ You may also use the command /ahstart to start. Try making a macro with it!</val
   <data name="AutoOceanFishHelpText" xml:space="preserve">
     <value>Handles everything on the boat itself: moving into position, casting, preset management.</value>
   </data>
+  <data name="SpectralRestOnGain" xml:space="preserve">
+    <value>Spectral Rest</value>
+  </data>
+  <data name="SpectralRestOnGainHelpText" xml:space="preserve">
+    <value>Rest and re-cast when a spectral current starts mid-cast</value>
+  </data>
   <data name="AutoHandleCollectables" xml:space="preserve">
     <value>Auto handle collectables</value>
   </data>
@@ -1701,5 +1707,26 @@ You may also use the command /ahstart to start. Try making a macro with it!</val
   </data>
   <data name="AutoHandleCollectables_Preset_HelpText" xml:space="preserve">
     <value>Will override the global auto collectables setting and only fire when this rule's conditions are met.</value>
+  </data>
+  <data name="PresetConditions_HelpText" xml:space="preserve">
+    <value>Reusable named conditions for this preset. Reference them within any condition set</value>
+  </data>
+  <data name="PresetConditions_DefinedInTab" xml:space="preserve">
+    <value>Defined in Conditions tab</value>
+  </data>
+  <data name="PresetConditions_Missing" xml:space="preserve">
+    <value>(condition missing)</value>
+  </data>
+  <data name="PresetConditions_NewName" xml:space="preserve">
+    <value>New condition</value>
+  </data>
+  <data name="Extra_PresetSwapLoop_Bailout" xml:space="preserve">
+    <value>Disabled plugin: extra rules created a preset swap loop ({0}).</value>
+  </data>
+  <data name="UnknownPresets" xml:space="preserve">
+    <value>Unknown Presets</value>
+  </data>
+  <data name="Opens_Replay_Window" xml:space="preserve">
+    <value>Opens Replay Window</value>
   </data>
 </root>
