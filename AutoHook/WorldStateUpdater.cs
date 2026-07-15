@@ -4,13 +4,17 @@ using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Event;
+using FFXIVClientStructs.FFXIV.Client.Game.Group;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Game.WKS;
+using FFXIVClientStructs.FFXIV.Client.Network;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.Interop;
 using Lumina.Excel.Sheets;
 using System.Reflection;
+using AchievementStruct = FFXIVClientStructs.FFXIV.Client.Game.UI.Achievement;
 
 namespace AutoHook;
 
@@ -29,6 +33,8 @@ public sealed class WorldStateUpdater : IDisposable {
     private readonly Hook<ActionManager.Delegates.UseAction>? _useActionHook;
     private readonly Hook<AgentCatch.Delegates.UpdateCatch>? _updateCatchHook;
     private readonly Hook<FishingEventHandler.Delegates.PlayAnimation>? _playAnimationHook;
+    private readonly Hook<PacketDispatcher.Delegates.HandleActorControlPacket>? _handleActorControlPacketHook;
+    private readonly Hook<AchievementStruct.Delegates.ReceiveAchievementProgress>? _receiveAchievementProgressHook;
     private static IReadOnlyList<Lumina.Excel.Sheets.Action> FshActions = [];
     private static readonly (uint Id, ActionType Type)[] TrackedFishingActions = BuildTrackedFishingActions();
     private static readonly (uint Id, ActionType Type)[] TrackedAutoCastItems =
@@ -44,6 +50,7 @@ public sealed class WorldStateUpdater : IDisposable {
     private readonly long _startQpc;
     private readonly Dictionary<uint, (float Time, int Stacks)> _statusScratch = [];
     private readonly List<uint> _swimbaitScratch = [];
+    private readonly List<ulong> _partyScratch = [];
     private readonly List<InstanceContentOceanFishing.FishDataStruct> _fishDataScratch = [];
     private readonly Cooldown[] _cooldownScratch = new Cooldown[PlayerInfo.NumCooldownGroups];
     private readonly Dictionary<ulong, uint> _actionStatusScratch = [];
@@ -57,9 +64,13 @@ public sealed class WorldStateUpdater : IDisposable {
         _updateCatchHook = Svc.Hook.HookFromAddress<AgentCatch.Delegates.UpdateCatch>((nint)AgentCatch.MemberFunctionPointers.UpdateCatch, UpdateCatchDetour);
         _useActionHook = Svc.Hook.HookFromAddress<ActionManager.Delegates.UseAction>((nint)ActionManager.MemberFunctionPointers.UseAction, UseActionDetour);
         _playAnimationHook = Svc.Hook.HookFromAddress<FishingEventHandler.Delegates.PlayAnimation>((nint)FishingEventHandler.StaticVirtualTablePointer->PlayAnimation, PlayAnimationDetour);
+        _handleActorControlPacketHook = Svc.Hook.HookFromAddress<PacketDispatcher.Delegates.HandleActorControlPacket>((nint)PacketDispatcher.MemberFunctionPointers.HandleActorControlPacket, HandleActorControlPacketDetour);
+        _receiveAchievementProgressHook = Svc.Hook.HookFromAddress<AchievementStruct.Delegates.ReceiveAchievementProgress>((nint)AchievementStruct.MemberFunctionPointers.ReceiveAchievementProgress, ReceiveAchievementProgressDetour);
         _updateCatchHook?.Enable();
         _useActionHook?.Enable();
         _playAnimationHook?.Enable();
+        _handleActorControlPacketHook?.Enable();
+        _receiveAchievementProgressHook?.Enable();
         FshActions = ClassJob.Get(18).GetActions();
 
         Svc.GameInventory.InventoryChanged += OnInventoryChanged;
@@ -69,6 +80,8 @@ public sealed class WorldStateUpdater : IDisposable {
         _useActionHook?.Dispose();
         _updateCatchHook?.Dispose();
         _playAnimationHook?.Dispose();
+        _handleActorControlPacketHook?.Dispose();
+        _receiveAchievementProgressHook?.Dispose();
         Svc.GameInventory.InventoryChanged -= OnInventoryChanged;
     }
 
@@ -105,6 +118,7 @@ public sealed class WorldStateUpdater : IDisposable {
         UpdateCooldowns(ws);
         UpdateActionStates(ws);
         UpdateDutyActions(ws);
+        UpdatePartyAndInstance(ws);
         UpdateOceanFishing(ws);
         UpdateWKS(ws);
         UpdateTerritory(ws);
@@ -138,8 +152,8 @@ public sealed class WorldStateUpdater : IDisposable {
     }
 
     private static bool CastSnapshotTransition(FishingState previous, FishingState current)
-        => (previous != FishingState.LineInWater && current == FishingState.LineInWater)
-           || (previous == FishingState.LineInWater && current != FishingState.LineInWater);
+        => previous != FishingState.LineInWater && current == FishingState.LineInWater
+           || previous == FishingState.LineInWater && current != FishingState.LineInWater;
 
     public void RefreshFishingStateSnapshot() {
         if (Player.ClassJob.RowId is not 18 || Svc.Objects.LocalPlayer is null)
@@ -175,9 +189,7 @@ public sealed class WorldStateUpdater : IDisposable {
         ws.Execute(new PlayerInfo.OpStatuses(new Dictionary<uint, (float, int)>(_statusScratch)));
     }
 
-    private static bool StatusesEqual(
-        IReadOnlyDictionary<uint, (float Time, int Stacks)> current,
-        IReadOnlyDictionary<uint, (float Time, int Stacks)> next) {
+    private static bool StatusesEqual(Dictionary<uint, (float Time, int Stacks)> current, Dictionary<uint, (float Time, int Stacks)> next) {
         if (current.Count != next.Count)
             return false;
 
@@ -249,16 +261,10 @@ public sealed class WorldStateUpdater : IDisposable {
         if (ActionStatesEqual(ws.Player.ActionStatus, ws.Player.ActionRecastGroup, _actionStatusScratch, _actionRecastScratch))
             return;
 
-        ws.Execute(new PlayerInfo.OpActionStates(
-            new Dictionary<ulong, uint>(_actionStatusScratch),
-            new Dictionary<ulong, int>(_actionRecastScratch)));
+        ws.Execute(new PlayerInfo.OpActionStates(new Dictionary<ulong, uint>(_actionStatusScratch), new Dictionary<ulong, int>(_actionRecastScratch)));
     }
 
-    private static bool ActionStatesEqual(
-        IReadOnlyDictionary<ulong, uint> currentStatus,
-        IReadOnlyDictionary<ulong, int> currentGroups,
-        IReadOnlyDictionary<ulong, uint> nextStatus,
-        IReadOnlyDictionary<ulong, int> nextGroups) {
+    private static bool ActionStatesEqual(Dictionary<ulong, uint> currentStatus, Dictionary<ulong, int> currentGroups, Dictionary<ulong, uint> nextStatus, Dictionary<ulong, int> nextGroups) {
         if (currentStatus.Count != nextStatus.Count || currentGroups.Count != nextGroups.Count)
             return false;
 
@@ -291,7 +297,7 @@ public sealed class WorldStateUpdater : IDisposable {
         ws.Execute(new PlayerInfo.OpDutyActions(active, new Dictionary<uint, ushort>(_dutyChargesScratch)));
     }
 
-    private static bool DutyChargesEqual(IReadOnlyDictionary<uint, ushort> current, IReadOnlyDictionary<uint, ushort> next) {
+    private static bool DutyChargesEqual(Dictionary<uint, ushort> current, Dictionary<uint, ushort> next) {
         if (current.Count != next.Count)
             return false;
         foreach (var (id, charges) in next) {
@@ -316,14 +322,47 @@ public sealed class WorldStateUpdater : IDisposable {
             ws.Execute(new WorldState.OpTerritory(territory));
     }
 
-    private static void UpdateWeather(WorldState ws) {
-        var territory = TerritoryType.GetRow(ws.TerritoryId);
-        (var current, var previous, var next) = (territory.GetCurrentWeather().RowId, territory.GetPreviousWeather().RowId, territory.GetNextWeather().RowId);
+    private unsafe void UpdatePartyAndInstance(WorldState ws) {
+        var inInstance = EventFramework.Instance()->GetInstanceContentDirector() != null;
+        if (inInstance != ws.Party.InInstanceContent) {
+            // snapshot who we queued with when we enter an instance, clear it when we leave
+            ws.Execute(new PartyState.OpQueuedWith(inInstance ? ws.Party.ContentIds : []));
+            ws.Execute(new PartyState.OpInInstanceContent(inInstance));
+        }
 
-        if (ws.CurrentWeatherId == current && ws.PreviousWeatherId == previous && ws.NextWeatherId == next)
+        _partyScratch.Clear();
+        var group = GroupManager.Instance()->MainGroup;
+        for (var i = 0; i < group.MemberCount; i++) {
+            var member = group.GetPartyMemberByIndex(i);
+            if (member != null)
+                _partyScratch.Add(member->ContentId);
+        }
+
+        if (PartyContentIdsEqual(ws.Party.ContentIds, _partyScratch))
             return;
 
-        ws.Execute(new WorldState.OpWeather(current, previous, next));
+        ws.Execute(new PartyState.OpMembers([.. _partyScratch]));
+    }
+
+    private static bool PartyContentIdsEqual(IReadOnlyList<ulong> current, List<ulong> next) {
+        if (current.Count != next.Count)
+            return false;
+        for (var i = 0; i < next.Count; i++) {
+            if (current[i] != next[i])
+                return false;
+        }
+        return true;
+    }
+
+    private static unsafe void UpdateWeather(WorldState ws) {
+        var territory = TerritoryType.GetRow(ws.TerritoryId);
+        var currentModified = WeatherManager.Instance()->GetCurrentWeather();
+        (var current, var previous, var next) = (territory.GetCurrentWeather().RowId, territory.GetPreviousWeather().RowId, territory.GetNextWeather().RowId);
+
+        if (ws.CurrentModifiedWeatherId == currentModified && ws.CurrentWeatherId == current && ws.PreviousWeatherId == previous && ws.NextWeatherId == next)
+            return;
+
+        ws.Execute(new WorldState.OpWeather(currentModified, current, previous, next));
     }
 
     private static void UpdateBiteContext(WorldState ws, BiteContext biteContext) {
@@ -467,7 +506,7 @@ public sealed class WorldStateUpdater : IDisposable {
         ws.Execute(new FishingInfo.OpSwimbaitIds([.. _swimbaitScratch]));
     }
 
-    private static bool SwimbaitIdsEqual(IReadOnlyList<uint> current, IReadOnlyList<uint> next) {
+    private static bool SwimbaitIdsEqual(List<uint> current, List<uint> next) {
         if (current.Count != next.Count)
             return false;
         for (var i = 0; i < current.Count; i++) {
@@ -550,6 +589,11 @@ public sealed class WorldStateUpdater : IDisposable {
         Service.WorldState.Execute(new FishingInfo.OpSetFishingStep(FishingSteps.FishCaught));
     }
 
+    private unsafe void ReceiveAchievementProgressDetour(AchievementStruct* thisPtr, uint id, uint current, uint max) {
+        _receiveAchievementProgressHook!.Original(thisPtr, id, current, max);
+        Service.WorldState.Execute(new WorldState.OpAchievementProgress(id, current, max));
+    }
+
     private unsafe bool PlayAnimationDetour(FishingEventHandler* thisPtr, Character* chara, ushort actionTimelineId, ulong a4) {
         var tugType = (FishingHookStrength)actionTimelineId;
         if (tugType is FishingHookStrength.Weak or FishingHookStrength.Strong or FishingHookStrength.Legendary) {
@@ -561,6 +605,16 @@ public sealed class WorldStateUpdater : IDisposable {
         }
 
         return _playAnimationHook!.Original(thisPtr, chara, actionTimelineId, a4);
+    }
+
+    private void HandleActorControlPacketDetour(uint entityId, uint category, uint arg1, uint arg2, uint arg3, uint arg4, uint arg5, uint arg6, uint arg7, uint arg8, GameObjectId targetId, bool isRecorded) {
+        _handleActorControlPacketHook!.Original(entityId, category, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, targetId, isRecorded);
+        switch (category) {
+            case 3702: // WKSMissionEnd? there's also 3500 but that triggers on start and end but with a different a1
+            case 3501: // WKSMissionItemGain or something. a1 is the itemid
+                _needInventoryUpdate = true;
+                break;
+        }
     }
 
     private static readonly HashSet<uint> FishIdSet = [];

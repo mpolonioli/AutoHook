@@ -60,11 +60,27 @@ public partial class FishingManager {
             var ignoreMooch = lastFishCatchCfg?.NeverMooch ?? false;
             var autoCast = acCfg.GetNextAutoCast(ignoreMooch);
 
-            if (acCfg.TryCastAction(autoCast, false, ignoreMooch))
+            if (acCfg.TryCastAction(autoCast, false, ignoreMooch)) {
+                ContinueStartFishing(autoCast);
                 return;
+            }
 
             CastLineMoochOrRelease(acCfg, lastFishCatchCfg);
         }, "AutoCasting");
+    }
+
+    private void ContinueStartFishing(BaseActionCast? usedAction) {
+        if (!Ws.FishingStep.HasFlag(FishingSteps.StartedCasting) || Ws.FishingStep.HasFlag(FishingSteps.BeganFishing))
+            return;
+
+        var delay = usedAction != null ? PlayerRes.GetPostCastDelayMs() : 0;
+        Service.TaskManager.EnqueueDelay(delay);
+        Service.TaskManager.Enqueue(() => {
+            if (!Ws.FishingStep.HasFlag(FishingSteps.StartedCasting) || Ws.FishingStep.HasFlag(FishingSteps.BeganFishing))
+                return;
+
+            UseAutoCasts();
+        }, "ContinueStartFishing");
     }
 
     private void CastLineMoochOrRelease(AutoCastsConfig acCfg, FishConfig? lastFishCatchCfg) {
@@ -169,7 +185,10 @@ public partial class FishingManager {
             Ws.SwimbaitEvaluationFishId = fishId;
             try {
                 if (activeSwimbaitCfg.ConditionSet.Fails()) {
-                    ReplayDecisions.SwimbaitSlotFailed(fishId, activeSwimbaitCfg.ConditionSet, presetName);
+                    var fishName = fishId == 0 ? "unknown fish" : Item.GetRow(fishId).Name.ToString();
+                    DecisionLog.Start("Swimbait", presetName)
+                        .WithConditions(activeSwimbaitCfg.ConditionSet)
+                        .Chose($"Conditions failed for {fishName}");
                     Service.PrintDebug($"[Swimbait] Fish {fishId}: conditions failed (source={configSource}), trying next slot");
                     continue;
                 }
@@ -179,7 +198,10 @@ public partial class FishingManager {
             }
 
             if (ChangeSwimbait((uint)slotIndex) == ChangeBaitReturn.Success) {
-                ReplayDecisions.SwimbaitSlotSelected(slotIndex, fishId, activeSwimbaitCfg.ConditionSet, presetName);
+                var fishName = fishId == 0 ? "unknown fish" : Item.GetRow(fishId).Name.ToString();
+                DecisionLog.Start("Swimbait", presetName)
+                    .WithConditions(activeSwimbaitCfg.ConditionSet)
+                    .Chose($"Selected slot {slotIndex} for {fishName}");
                 Service.WorldStateUpdater?.RefreshFishingStateSnapshot();
                 UpdateStatusAndTimer();
                 Service.PrintDebug($"[Swimbait] Using slot {slotIndex} (fish ID: {fishId}, source={configSource})");

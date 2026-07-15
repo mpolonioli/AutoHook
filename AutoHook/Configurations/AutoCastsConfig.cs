@@ -48,24 +48,31 @@ public class AutoCastsConfig {
         return output;
     }
 
-    public BaseActionCast? GetNextAutoCast(bool ignoreCurrentMooch) {
+    public BaseActionCast? GetNextAutoCast(bool ignoreCurrentMooch)
+        => GetNextAutoCast(GetAutoCastOrder(), ignoreCurrentMooch);
+
+    public BaseActionCast? GetNextGpRestoringCast(bool ignoreCurrentMooch)
+        => GetNextAutoCast(GetAutoCastOrder().Where(action => action.RestoresGp), ignoreCurrentMooch);
+
+    private BaseActionCast? GetNextAutoCast(IEnumerable<BaseActionCast> order, bool ignoreCurrentMooch) {
         if (!EnableAll)
             return null;
 
-        BaseActionCast? cast = null;
-
-        var order = GetAutoCastOrder();
-
         foreach (var action in order.Where(action => action.IsAvailableToCast(ignoreCurrentMooch))) {
-            if (action.RequiresTimeWindow() && !TimeWindow.BackingSet.PassesOrUnconfigured())
+            if (action.RequiresTimeWindow() && !TimeWindow.BackingSet.PassesOrUnconfigured()) {
+                LogAutoCastDecision(action, "Time window blocked");
                 continue;
+            }
 
             Service.PrintDebug($"[AutoCast] Returning {action.GetName()}");
             return action;
         }
 
-        return cast;
+        return null;
     }
+
+    public bool TryCastGpRestoringAction(bool ignoreCurrentMooch = false)
+        => TryCastAction(GetNextGpRestoringCast(ignoreCurrentMooch), ignoreCurrentMooch: ignoreCurrentMooch);
 
     [JsonProperty("TimeWindowConditionSet")]
     [JsonConverter(typeof(SingleConditionConverter))]
@@ -75,27 +82,52 @@ public class AutoCastsConfig {
         if (action == null || !EnableAll)
             return false;
 
-        if (action.RequiresTimeWindow() && !TimeWindow.BackingSet.PassesOrUnconfigured())
+        if (action.RequiresTimeWindow() && !TimeWindow.BackingSet.PassesOrUnconfigured()) {
+            LogAutoCastDecision(action, "Time window blocked");
             return false;
+        }
 
-        if (!action.Enabled || !action.IsAvailableToCast(ignoreCurrentMooch))
+        if (action.DescribeUnavailable(ignoreCurrentMooch) is { } unavailable) {
+            LogAutoCastDecision(action, unavailable);
             return false;
+        }
 
         if (action.Id == IDs.Actions.Chum && ChumAnimationCancel) {
             TryChumAnimationCancel();
-            ReplayDecisions.AutoCast(action, this);
+            LogAutoCastDecision(action);
             return true;
         }
 
         if (noDelay) {
-            if (!PlayerRes.TryCastActionNoDelay(action.Id, action.ActionType, action.GetName()))
+            if (!PlayerRes.TryCastActionNoDelay(action.Id, action.ActionType, action.GetName())) {
+                LogAutoCastDecision(action, "Cast rejected by game");
                 return false;
+            }
         }
-        else if (!PlayerRes.TryCastActionDelayed(action.Id, action.ActionType, action.GetName()))
+        else if (!PlayerRes.TryCastActionDelayed(action.Id, action.ActionType, action.GetName())) {
+            LogAutoCastDecision(action, "Cast rejected by game");
             return false;
+        }
 
-        ReplayDecisions.AutoCast(action, this);
+        LogAutoCastDecision(action);
         return true;
+    }
+
+    private void LogAutoCastDecision(BaseActionCast action, string? failureReason = null) {
+        var trace = action.ConditionSet?.DescribeEvaluation(Service.WorldState, ConditionRegistry.Registry) ?? [];
+        if (action.RequiresTimeWindow() && TimeWindow.BackingSet is { } timeWindow) {
+            var global = timeWindow.DescribeEvaluation(Service.WorldState, ConditionRegistry.Registry);
+            if (global.Count > 0)
+                trace = [.. trace, .. global.Select(t => ($"Global {t.Label}", t.Result))];
+        }
+
+        var outcome = failureReason == null
+            ? $"Cast {action.GetName()}"
+            : $"Did not cast {action.GetName()} — {failureReason}";
+
+        DecisionLog.Start(UIStrings.Auto_Casts)
+            .WithConditionResults(trace)
+            .Chose(outcome);
     }
 
     private void TryChumAnimationCancel() {

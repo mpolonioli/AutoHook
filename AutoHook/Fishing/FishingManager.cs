@@ -76,6 +76,9 @@ public partial class FishingManager : IDisposable {
         var ocean = Ws.OceanFishing;
         Service.PrintDebug($"[AutoOceanFish] OnZoneStarted zone={op.ZoneIndex + 1}, {OceanStopUtil.FormatStateLog(ocean)}");
 
+        if (ocean != OceanFishingState.Empty) // prefetch immediately so it's cached by the time we're at the railing (hopefully)
+            OceanGoalCatalog.PrefetchRouteAchievements(ocean.CurrentRoute);
+
         if (!Service.Configuration.PluginEnabled) {
             Service.PrintDebug("[AutoOceanFish] Task not started: plugin disabled");
             return;
@@ -143,6 +146,11 @@ public partial class FishingManager : IDisposable {
                 break;
             case FishingInfo.OpSetLastCatch:
                 OnCatch();
+                break;
+            case WorldState.OpAchievementProgress:
+                // try to reapply the preset in case we received achievement progress that changes which one we should use
+                if (Ws.OceanFishing != OceanFishingState.Empty)
+                    TryApplyOceanFishingPreset();
                 break;
         }
     }
@@ -246,7 +254,7 @@ public partial class FishingManager : IDisposable {
         Service.WorldStateUpdater.Update();
 
         if (Player.ClassJob.RowId != FisherJobId) {
-            SanitizeWorldStateWhenNotFisher();
+            ClearWorldState();
             return;
         }
 
@@ -254,6 +262,10 @@ public partial class FishingManager : IDisposable {
         if (currentState == FishingState.None) {
             if (EzThrottler.Throttle(@"CheckExtraActionsNone", 500) && Ws.IsCastAvailable())
                 CheckExtraActions();
+
+            // cordial can be done while None, but the rest of autocasts are PoleReady-only, so retry them here
+            if (Ws.FishingStep.HasFlag(FishingSteps.StartedCasting) && !Ws.FishingStep.HasFlag(FishingSteps.BeganFishing))
+                CheckPluginActions();
 
             if (Service.Configuration.AutoStartFishing && !ShouldSuppressAutoStartFishing() && EzThrottler.Throttle("AutoStartFishing", 1000)) {
                 var autoCastCfg = GetAutoCastCfg();
@@ -310,7 +322,7 @@ public partial class FishingManager : IDisposable {
     private bool ShouldSuppressAutoStartFishing() => Service.Configuration.AutoOceanFish && (Svc.Automation.CurrentTask is AutoOceanFish || Ws.OceanFishing != OceanFishingState.Empty);
 
     // WSU doesn't refresh when not on fisher so gotta clear block casting cause it will affect other jobs
-    private void SanitizeWorldStateWhenNotFisher() {
+    private void ClearWorldState() {
         var f = Ws.Fishing;
         if (!Ws.Player.BlockCasting && f.FishingState == FishingState.None && f.FishingStep == FishingSteps.None && f.PreviousFishingState == FishingState.None)
             return;
@@ -348,6 +360,13 @@ public partial class FishingManager : IDisposable {
         var casted = false;
         if (Ws.FishingStep.HasFlag(FishingSteps.FishCaught) && !Ws.FishingStep.HasFlag(FishingSteps.Quitting)) {
             casted = UseFishCaughtActions(lastCatchCfg);
+
+            if (!casted && lastCatchCfg is { Enabled: true } && HasGpBlockedFishCaughtAction(lastCatchCfg)) {
+                var acCfg = GetAutoCastCfg();
+                var ignoreMooch = lastCatchCfg.NeverMooch;
+                casted = acCfg.TryCastGpRestoringAction(ignoreMooch);
+            }
+
             CheckFishCaughtSwap(lastCatchCfg);
         }
 
@@ -405,7 +424,8 @@ public partial class FishingManager : IDisposable {
     private void OnBite() {
         UpdateStatusAndTimer();
         var currentHook = GetHookCfg();
-        ReplayDecisions.HookPresetOnBite(currentHook.Enabled);
+        DecisionLog.Start("Hook Preset")
+            .Chose(currentHook.Enabled ? "Enabled preset on bite" : "No enabled preset on bite");
         _fishingTimer.Stop();
 
         if (Ws.Player.HasStatus(IDs.Status.Salvage) && GetAutoCastCfg().ChumAnimationCancel)
@@ -429,7 +449,7 @@ public partial class FishingManager : IDisposable {
 
         if (hook is null or HookType.None) {
             delay = _rng.Next(Service.Configuration.DelayBeforeCancelMin, Service.Configuration.DelayBeforeCancelMax);
-            ReplayDecisions.HookPresetChoice(bite, null);
+            DecisionLog.Start("Hook Preset").Chose($"No hook for {bite} bite");
 
             Service.TaskManager.EnqueueDelay(delay);
             Service.TaskManager.Enqueue(() => PlayerRes.CastAction(IDs.Actions.Rest));
@@ -438,7 +458,7 @@ public partial class FishingManager : IDisposable {
             return;
         }
 
-        ReplayDecisions.HookPresetChoice(bite, hook);
+        DecisionLog.Start("Hook Preset").Chose($"Use {hook} for {bite} bite");
         Service.TaskManager.EnqueueDelay(delay);
         Service.TaskManager.Enqueue(() => {
             if (hook == HookType.Stellar)
@@ -517,6 +537,6 @@ public partial class FishingManager : IDisposable {
         FishingHelper.Reset();
 
         PlayerRes.CastActionNoDelay(IDs.Actions.Quit);
-        PlayerRes.DelayNextCast(0);
+        PlayerRes.DelayNextCast();
     }
 }

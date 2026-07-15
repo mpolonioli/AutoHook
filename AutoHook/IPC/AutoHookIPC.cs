@@ -39,7 +39,7 @@ public class AutoHookIPC {
 
     [EzIPC]
     public void SetPreset(string preset) {
-        WriteConfig(() => _cfg.HookPresets.SelectedPreset = _cfg.HookPresets.CustomPresets.FirstOrDefault(x => x.PresetName == preset));
+        WriteConfig(() => _cfg.HookPresets.Select(_cfg.HookPresets.CustomPresets.FirstOrDefault(x => x.PresetName == preset), FishingPresets.ReasonIpc));
         Service.Save();
     }
 
@@ -57,9 +57,24 @@ public class AutoHookIPC {
             customPreset.RenamePreset(nameMap[customPreset.PresetName]);
             CustomPresetConfig.RemapPresetSwapReferences(customPreset, nameMap);
             _cfg.HookPresets.AddNewPreset(customPreset);
-            _cfg.HookPresets.SelectedPreset = _cfg.HookPresets.CustomPresets.FirstOrDefault(x => x.PresetName == nameMap.Values.First());
+            _cfg.HookPresets.Select(_cfg.HookPresets.CustomPresets.FirstOrDefault(x => x.PresetName == nameMap.Values.First()), FishingPresets.ReasonIpc);
         });
         Service.Save();
+    }
+
+    [EzIPC]
+    public bool CreateAndSelectAutoAnonymousPreset(uint itemId, uint baitId, bool stopAfterCaughtOnce) {
+        if (CustomPresetConfig.CreateAutoPreset(baitId, itemId, stopAfterCaughtOnce) is not CustomPresetConfig preset)
+            return false;
+
+        WriteConfig(() => {
+            var nameMap = CustomPresetConfig.BuildAnonymousNameMap([preset]);
+            preset.RenamePreset(nameMap[preset.PresetName]);
+            _cfg.HookPresets.AddNewPreset(preset);
+            _cfg.HookPresets.Select(_cfg.HookPresets.CustomPresets.FirstOrDefault(x => x.PresetName == preset.PresetName), FishingPresets.ReasonIpc);
+        });
+        Service.Save();
+        return true;
     }
 
     [EzIPC]
@@ -98,7 +113,7 @@ public class AutoHookIPC {
             var selected = _cfg.HookPresets.SelectedPreset;
             if (selected == null) return;
             _cfg.HookPresets.RemovePreset(selected.UniqueId);
-            _cfg.HookPresets.SelectedPreset = null;
+            _cfg.HookPresets.Select(null, FishingPresets.ReasonIpc);
         });
         Service.Save();
     }
@@ -151,7 +166,7 @@ public class AutoHookIPC {
         }
 
         if (folderImport.Presets.FirstOrDefault() is { } first)
-            _cfg.HookPresets.SelectedPreset = first;
+            _cfg.HookPresets.Select(first, FishingPresets.ReasonIpc);
     }
 
     private static void WriteConfig(Action action) {

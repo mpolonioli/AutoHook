@@ -54,7 +54,7 @@ internal sealed class ReplayBinaryReader(Stream stream, FishingReplay replay, Ca
             "FRAM" => ParseFrame(),
             "EORZ" => new WorldState.OpEorzeaTime(ParseTimeOnly()),
             "TRTY" => new WorldState.OpTerritory(_reader.ReadUInt32()),
-            "WTHR" => new WorldState.OpWeather(_reader.ReadByte(), _reader.ReadByte(), _reader.ReadByte()),
+            "WTHR" => new WorldState.OpWeather(_reader.ReadByte(), _reader.ReadByte(), _reader.ReadByte(), _reader.ReadByte()),
             "ZONE" => new WorldState.OpZone(_reader.ReadByte(), _reader.ReadUInt32()),
             "GP  " => new PlayerInfo.OpGp(_reader.ReadUInt32(), _reader.ReadUInt32()),
             "LVL " => new PlayerInfo.OpLevel(_reader.ReadByte()),
@@ -91,8 +91,20 @@ internal sealed class ReplayBinaryReader(Stream stream, FishingReplay replay, Ca
             "FEND" => new WorldState.OpEndedSession(),
             "OZON" => new WorldState.OpOceanZoneStarted(_reader.ReadUInt32()),
             "SPCH" => new WorldState.OpSpectralCurrentChanged((SpectralCurrentChange)_reader.ReadByte()),
+            "ACHP" => new WorldState.OpAchievementProgress(_reader.ReadUInt32(), _reader.ReadUInt32(), _reader.ReadUInt32()),
+            "PRTY" => ParseContentIdList(ids => new PartyState.OpMembers(ids)),
+            "QWIT" => ParseContentIdList(ids => new PartyState.OpQueuedWith(ids)),
+            "INST" => new PartyState.OpInInstanceContent(_reader.ReadBoolean()),
             _ => null,
         };
+    }
+
+    private WorldState.Operation ParseContentIdList(Func<IReadOnlyList<ulong>, WorldState.Operation> factory) {
+        var count = _reader.ReadInt32();
+        var ids = new ulong[count];
+        for (var i = 0; i < count; i++)
+            ids[i] = _reader.ReadUInt64();
+        return factory(ids);
     }
 
     private WorldState.Operation? ParseVer() {
