@@ -1,5 +1,5 @@
 ﻿using ECommons.MathHelpers;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 using FishRow = Lumina.Excel.Sheets.FishParameter;
 using ItemRow = Lumina.Excel.Sheets.Item;
 
@@ -13,6 +13,9 @@ public class BaitFishClass : IComparable<BaitFishClass> {
         <= 0 => UIStrings.None,
         _ => ItemRow.GetRow((uint)Id).Name.ToString()
     };
+
+    [JsonIgnore]
+    public bool IsLocked => FishRow.FirstOrNull(r => r.Item.RowId == Id) is { GatheringSubCategory.ValueNullable.Item.RowId: not 0, GatheringSubCategory.ValueNullable.Item.Value: var book } && !Svc.UnlockState.IsItemUnlocked(book);
 
     public int Id;
 
