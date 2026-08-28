@@ -38,6 +38,16 @@ public partial class FishingManager {
 
         public static List<Guid> ToBeRemoved = [];
 
+        // Baseline for the "any fish" counter: the session total (WorldState) at the last counter reset.
+        public static int TotalFishCaughtOffset;
+
+        // Total amount of fish caught since the last counter reset, regardless of which fish it was.
+        public static int GetTotalFishCaught(WorldState world)
+            => Math.Max(0, world.Fishing.FishCaughtCounts.Values.Sum() - TotalFishCaughtOffset);
+
+        public static void ResetTotalFishCaught()
+            => TotalFishCaughtOffset = Service.WorldState is { } ws ? ws.Fishing.FishCaughtCounts.Values.Sum() : 0;
+
         public static void AddFishCount(Guid guid) {
             FishCount.TryAdd(guid, 0);
             FishCount[guid]++;
@@ -100,6 +110,7 @@ public partial class FishingManager {
             FishCount = [];
             FishPresetSwapped = [];
             FishBaitSwapped = [];
+            TotalFishCaughtOffset = 0;
         }
     }
 }
