@@ -6,6 +6,9 @@ public static class FishingCounters {
     private static List<Guid> FishBaitSwapped = [];
     private static readonly List<Guid> ToBeRemoved = [];
 
+    // Baseline for the "any fish" counter: the session total (WorldState) at the last counter reset.
+    private static int TotalFishCaughtOffset;
+
     public static void AddFishCount(Guid guid) {
         FishCount.TryAdd(guid, 0);
         FishCount[guid]++;
@@ -25,6 +28,13 @@ public static class FishingCounters {
         if (SwappedPreset(guid))
             FishPresetSwapped.Remove(guid);
     }
+
+    // Total amount of fish caught since the last counter reset, regardless of which fish it was.
+    public static int GetTotalFishCaught(WorldState world)
+        => Math.Max(0, world.Fishing.FishCaughtCounts.Values.Sum() - TotalFishCaughtOffset);
+
+    public static void ResetTotalFishCaught()
+        => TotalFishCaughtOffset = WorldState.Get().Fishing.FishCaughtCounts.Values.Sum();
 
     public static int GetFishCount(Guid guid)
         => !FishCount.TryGetValue(guid, out var value) ? 0 : value;
@@ -59,5 +69,6 @@ public static class FishingCounters {
         FishPresetSwapped = [];
         FishBaitSwapped = [];
         ToBeRemoved.Clear();
+        TotalFishCaughtOffset = 0;
     }
 }

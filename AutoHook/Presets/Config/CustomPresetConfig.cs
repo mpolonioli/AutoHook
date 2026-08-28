@@ -141,6 +141,8 @@ public class CustomPresetConfig : BasePresetConfig {
     }
 
     public void ResetCounter() {
+        FishingCounters.ResetTotalFishCaught();
+
         foreach (var item in ListOfBaits) {
             FishingCounters.RemoveId(item.UniqueId);
         }
