@@ -32,7 +32,7 @@ public readonly struct BiteContext {
     public uint? LastCaughtFishId { get; init; }
 }
 
-public sealed class WorldStateUpdater : IDisposable {
+public sealed unsafe class WorldStateUpdater : IDisposable {
     private const float BiteTimeLogThreshold = 0.25f;
 
     private readonly Hook<ActionManager.Delegates.UseAction>? _useActionHook;
